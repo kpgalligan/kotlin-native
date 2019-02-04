@@ -311,6 +311,15 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         context.log{"visitModule                    : ${ir2string(declaration)}"}
 
         initializeCachedBoxes(context)
+
+        if (context.shouldEmitCoverage()) {
+            declaration.files.forEach {  collectFunctionRegions(it) }
+
+            val coverageMappings = context.coverageMappingsBuilder.build()
+
+            PrintCoverageMappingsWriter().write(coverageMappings)
+        }
+
         declaration.acceptChildrenVoid(this)
 
         // Note: it is here because it also generates some bitcode.
@@ -327,7 +336,22 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         if (context.isNativeLibrary) {
             appendCAdapters()
         }
+    }
 
+    private fun collectFunctionRegions(irFile: IrFile) {
+        irFile.acceptChildrenVoid(object : IrElementVisitorVoid {
+            override fun visitFunction(declaration: IrFunction) {
+                super.visitFunction(declaration)
+
+                context.coverageMappingsBuilder.collect(irFile, declaration)
+
+                declaration.acceptChildrenVoid(this)
+            }
+
+            override fun visitElement(element: IrElement) {
+                element.acceptChildrenVoid(this)
+            }
+        })
     }
 
     //-------------------------------------------------------------------------//

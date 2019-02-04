@@ -319,6 +319,8 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
     lateinit var bitcodeFileName: String
     lateinit var library: KonanLibraryWriter
 
+    val coverageMappingsBuilder = CoverageMappingsBuilder()
+
     val cStubsManager = CStubsManager()
 
     lateinit var privateFunctions: List<Pair<IrFunction, DataFlowIR.FunctionSymbol.Declared>>
@@ -442,6 +444,8 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
     fun shouldContainDebugInfo() = config.debug
 
     fun shouldOptimize() = config.configuration.getBoolean(KonanConfigKeys.OPTIMIZATION)
+
+    fun shouldEmitCoverage() = config.configuration.getBoolean(KonanConfigKeys.COVERAGE)
 
     override var inVerbosePhase = false
     override fun log(message: () -> String) {
