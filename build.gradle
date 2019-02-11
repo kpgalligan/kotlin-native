@@ -256,6 +256,10 @@ task distCompiler(type: Copy) {
         into('konan/nativelib')
     }
 
+    from(project(':llvmCoverageMappingC').file('build/libs/coverageMapping/shared')) {
+        into('konan/nativelib')
+    }
+
     from(project(':llvmDebugInfoC').file('build/libs/debugInfo/shared')) {
         into('konan/nativelib')
     }

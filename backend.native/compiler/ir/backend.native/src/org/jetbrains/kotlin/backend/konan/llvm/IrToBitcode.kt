@@ -13,6 +13,7 @@ import org.jetbrains.kotlin.backend.konan.*
 import org.jetbrains.kotlin.backend.konan.descriptors.*
 import org.jetbrains.kotlin.backend.konan.ir.*
 import org.jetbrains.kotlin.backend.konan.irasdescriptors.*
+import org.jetbrains.kotlin.backend.konan.llvm.coverage.*
 import org.jetbrains.kotlin.backend.konan.objcexport.ObjCExport
 import org.jetbrains.kotlin.backend.konan.optimizations.*
 import org.jetbrains.kotlin.builtins.KotlinBuiltIns
@@ -307,18 +308,17 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
     }
 
     //-------------------------------------------------------------------------//
+
+
     override fun visitModuleFragment(declaration: IrModuleFragment) {
         context.log{"visitModule                    : ${ir2string(declaration)}"}
 
+        context.filesRegionsInfo += if (context.shouldEmitCoverage())
+            LLVMCoverageRegionCollector(context).collectFunctionRegions(declaration)
+        else
+            emptyList()
+
         initializeCachedBoxes(context)
-
-        if (context.shouldEmitCoverage()) {
-            declaration.files.forEach {  collectFunctionRegions(it) }
-
-            val coverageMappings = context.coverageMappingsBuilder.build()
-
-            PrintCoverageMappingsWriter().write(coverageMappings)
-        }
 
         declaration.acceptChildrenVoid(this)
 
@@ -328,7 +328,7 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         codegen.objCDataGenerator?.finishModule()
 
         BitcodeEmbedding.processModule(context.llvm)
-
+        LLVMCoverageWriter(context, context.filesRegionsInfo).write()
         appendDebugSelector()
         appendLlvmUsed("llvm.used", context.llvm.usedFunctions + context.llvm.usedGlobals)
         appendLlvmUsed("llvm.compiler.used", context.llvm.compilerUsedGlobals)
@@ -336,22 +336,6 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         if (context.isNativeLibrary) {
             appendCAdapters()
         }
-    }
-
-    private fun collectFunctionRegions(irFile: IrFile) {
-        irFile.acceptChildrenVoid(object : IrElementVisitorVoid {
-            override fun visitFunction(declaration: IrFunction) {
-                super.visitFunction(declaration)
-
-                context.coverageMappingsBuilder.collect(irFile, declaration)
-
-                declaration.acceptChildrenVoid(this)
-            }
-
-            override fun visitElement(element: IrElement) {
-                element.acceptChildrenVoid(this)
-            }
-        })
     }
 
     //-------------------------------------------------------------------------//
@@ -621,6 +605,18 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
             codegen.llvmFunction(it)
         }
 
+
+        val coverageInstrumentation: CoverageInstrumentation = if (context.shouldEmitCoverage()) {
+            val regions = context.filesRegionsInfo.flatMap { it.functions }.firstOrNull { it.function == declaration }
+            if (regions == null) {
+                DumpCoverageInstrumentation()
+            } else {
+                LLVMCoverageInstrumentation(context, regions) { function, args -> functionGenerationContext.call(function, args) }
+            }
+        } else {
+            DumpCoverageInstrumentation()
+        }
+
         private var name:String? = declaration?.name?.asString()
 
         override fun genReturn(target: IrSymbolOwner, value: LLVMValueRef?) {
@@ -692,6 +688,7 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
                 val parameterScope = ParameterScope(declaration, functionGenerationContext)
                 using(parameterScope) {
                     using(VariableScope()) {
+                        profile(body)
                         when (body) {
                             is IrBlockBody -> body.statements.forEach { generateStatement(it) }
                             is IrExpressionBody -> generateStatement(body.expression)
@@ -772,10 +769,16 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         }
     }
 
+    private fun profile(irElement: IrElement) {
+        if (context.shouldEmitCoverage())
+            (currentCodeContext.functionScope() as? FunctionScope)?.coverageInstrumentation?.instrumentIrElement(irElement)
+    }
+
     //-------------------------------------------------------------------------//
 
     private fun evaluateExpression(value: IrExpression): LLVMValueRef {
         updateBuilderDebugLocation(value)
+        profile(value)
         when (value) {
             is IrTypeOperatorCall    -> return evaluateTypeOperator           (value)
             is IrCall                -> return evaluateCall                   (value)

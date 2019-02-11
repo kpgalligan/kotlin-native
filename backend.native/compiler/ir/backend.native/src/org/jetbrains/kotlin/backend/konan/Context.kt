@@ -42,7 +42,6 @@ import org.jetbrains.kotlin.builtins.konan.KonanBuiltIns
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
 import org.jetbrains.kotlin.ir.symbols.impl.IrSimpleFunctionSymbolImpl
 import org.jetbrains.kotlin.konan.target.CompilerOutputKind
-import org.jetbrains.kotlin.metadata.konan.KonanProtoBuf
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi2ir.generators.GeneratorContext
@@ -50,12 +49,11 @@ import org.jetbrains.kotlin.resolve.BindingContext
 import org.jetbrains.kotlin.resolve.descriptorUtil.module
 import org.jetbrains.kotlin.resolve.scopes.MemberScope
 import org.jetbrains.kotlin.resolve.scopes.receivers.ImplicitClassReceiver
-import org.jetbrains.kotlin.serialization.deserialization.descriptors.DeserializedClassDescriptor
-import org.jetbrains.kotlin.serialization.deserialization.getName
 import java.lang.System.out
 import kotlin.LazyThreadSafetyMode.PUBLICATION
 import kotlin.reflect.KProperty
 import org.jetbrains.kotlin.backend.common.ir.copyTo
+import org.jetbrains.kotlin.backend.konan.llvm.coverage.FileRegionInfoImpl
 import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 
 /**
@@ -319,8 +317,6 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
     lateinit var bitcodeFileName: String
     lateinit var library: KonanLibraryWriter
 
-    val coverageMappingsBuilder = CoverageMappingsBuilder()
-
     val cStubsManager = CStubsManager()
 
     lateinit var privateFunctions: List<Pair<IrFunction, DataFlowIR.FunctionSymbol.Declared>>
@@ -445,7 +441,9 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
 
     fun shouldOptimize() = config.configuration.getBoolean(KonanConfigKeys.OPTIMIZATION)
 
+    // TODO: refactor
     fun shouldEmitCoverage() = config.configuration.getBoolean(KonanConfigKeys.COVERAGE)
+    val filesRegionsInfo = mutableListOf<FileRegionInfoImpl>()
 
     override var inVerbosePhase = false
     override fun log(message: () -> String) {

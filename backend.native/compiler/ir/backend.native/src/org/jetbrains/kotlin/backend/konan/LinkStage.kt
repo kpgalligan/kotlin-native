@@ -208,7 +208,16 @@ internal class LinkStage(val context: Context) {
     val objectFiles = mutableListOf<String>()
 
     fun makeObjectFiles() {
-        val bitcodeFiles = listOf(emitted) +
+
+        val program = if (context.shouldEmitCoverage()) {
+            val file = temporary("profiled", ".bc")
+            hostLlvmTool("opt", emitted, "-instrprof", "-o", file)
+            file
+        } else {
+            emitted
+        }
+
+        val bitcodeFiles = listOf(program) +
                 libraries.map { it.bitcodePaths }.flatten().filter { it.isBitcode }
 
         objectFiles.add(when (platform.configurables) {

@@ -91,7 +91,7 @@ open class Command(initialCommand: List<String>) {
 
             val process = builder.start()
             val code = process.waitFor()
-            if (handleError) handleExitCode(code)
+            if (handleError) handleExitCode(code, outputFile.readLines())
 
             return Result(code, outputFile.readLines())
         } finally {
@@ -101,11 +101,11 @@ open class Command(initialCommand: List<String>) {
 
     class Result(val exitCode: Int, val outputLines: List<String>)
 
-    private fun handleExitCode(code: Int) {
+    private fun handleExitCode(code: Int, outputLines: List<String> = emptyList()) {
         if (code != 0) throw KonanExternalToolFailure("The ${command[0]} command returned non-zero exit code: $code.", command[0])
     }
 
     private fun log() {
-        if (logger != null) logger!! { command.toList<String>().joinToString(" ") }
+        if (logger != null) logger!! { command.joinToString(" ") }
     }
 }

@@ -158,6 +158,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
                                          endLocation: LocationInfo?,
                                          internal val irFunction: IrFunction? = null): ContextUtils {
 
+
     override val context = codegen.context
     val vars = VariableManager(this)
     private val basicBlockToLastLocation = mutableMapOf<LLVMBasicBlockRef, LocationInfo>()
@@ -830,6 +831,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
         arenaSlot = intToPtr(
                 or(ptrToInt(slotsPhi, codegen.intPtrType), codegen.immOneIntPtrType), kObjHeaderPtrPtr)
         positionAtEnd(entryBb)
+
     }
 
     internal fun epilogue() {
