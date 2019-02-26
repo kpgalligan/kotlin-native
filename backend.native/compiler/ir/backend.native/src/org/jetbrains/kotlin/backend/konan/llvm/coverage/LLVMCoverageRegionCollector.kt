@@ -1,19 +1,15 @@
 package org.jetbrains.kotlin.backend.konan.llvm.coverage
 
+import org.jetbrains.kotlin.backend.common.ir.ir2string
 import org.jetbrains.kotlin.backend.common.pop
 import org.jetbrains.kotlin.backend.common.push
 import org.jetbrains.kotlin.backend.konan.Context
-import org.jetbrains.kotlin.backend.konan.ir.IrFileImpl
 import org.jetbrains.kotlin.backend.konan.ir.KonanIrReturnableBlockImpl
-import org.jetbrains.kotlin.backend.konan.ir.NaiveSourceBasedFileEntryImpl
 import org.jetbrains.kotlin.backend.konan.llvm.column
 import org.jetbrains.kotlin.backend.konan.llvm.line
 import org.jetbrains.kotlin.backend.konan.llvm.symbolName
 import org.jetbrains.kotlin.ir.IrElement
-import org.jetbrains.kotlin.ir.declarations.IrFile
-import org.jetbrains.kotlin.ir.declarations.IrFunction
-import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
-import org.jetbrains.kotlin.ir.declarations.name
+import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
@@ -43,30 +39,23 @@ class RegionImpl(
     }
 }
 
-private data class Gap(val startOffset: Int, val endOffset: Int) {
-    fun toRegion(irFile: IrFile): RegionImpl =
-            RegionImpl.fromOffset(startOffset, endOffset, irFile, RegionKind.Gap)
-}
-
 class FunctionRegionsImpl(
         override val function: IrFunction,
-        override val regions: Map<IrElement, RegionImpl>,
-        val gaps: List<RegionImpl>
+        override val regions: Map<IrElement, RegionImpl>
 ) : FunctionRegions {
-    val regionEnumeration = (regions.values + gaps).mapIndexed { index, region -> region to index }.toMap()
+    val regionEnumeration = (regions.values).mapIndexed { index, region -> region to index }.toMap()
 
     // Actually, it should be computed. But since we don't support PGO it doesn't really matter for now.
     val structuralHash: Long = 0
 }
 
 private fun Region.dump() = buildString {
-    append("${file.name}: ${kind::class.simpleName} $startLine, $startColumn -> $endLine, $endColumn")
+    append("${file.name}${(kind as? RegionKind.Expansion)?.let { " expand to " + it.expandedFile.name} ?: ""}: ${kind::class.simpleName} $startLine, $startColumn -> $endLine, $endColumn")
 }
 
 private fun FunctionRegionsImpl.dump() = buildString {
     appendln("${function.symbolName} regions:")
-    regions.forEach { (irElem, region) -> appendln("$irElem -> (${region.dump()})") }
-    gaps.forEach { appendln("(${it.dump()})") }
+    regions.forEach { (irElem, region) -> appendln("${ir2string(irElem)} -> (${region.dump()})") }
 }
 
 class FileRegionInfoImpl(
@@ -97,27 +86,26 @@ internal class LLVMCoverageRegionCollector(val context: Context) : CoverageRegio
             if (!declaration.isInline && !declaration.isExternal) {
                 val regions = collectRegions(file, declaration)
                 if (regions.regions.isNotEmpty()) {
+                    println(regions.dump())
                     functionRegions += regions
                 }
             }
             declaration.acceptChildrenVoid(this)
         }
         private fun collectRegions(irFile: IrFile, irFunction: IrFunction) =
-                IrFunctionRegionsCollector(context, irFile).collect(irFunction).also { println(it.dump()) }
+                IrFunctionRegionsCollector(context, irFile).collect(irFunction)
     }
 }
 
 private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFile) {
 
-    private val dummyFile = IrFileImpl(NaiveSourceBasedFileEntryImpl("no source file"))
-
     fun collect(irFunction: IrFunction): FunctionRegionsImpl {
-        val visitor = Visitor()
+        val visitor = CollectorVisitor(context, irFile)
         visitor.visitFunction(irFunction)
-        return FunctionRegionsImpl(irFunction, visitor.regions, visitor.gaps)
+        return FunctionRegionsImpl(irFunction, visitor.regions)
     }
 
-    private inner class Visitor : IrElementVisitorVoid {
+    private class CollectorVisitor(val context: Context, irFile: IrFile) : IrElementVisitorVoid {
 
         private val irFileStack = mutableListOf(irFile)
 
@@ -126,10 +114,13 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
 
         val regions = mutableMapOf<IrElement, RegionImpl>()
 
-        val gaps = mutableListOf<RegionImpl>()
-
         override fun visitElement(element: IrElement) {
             element.acceptChildrenVoid(this)
+        }
+
+        override fun visitVariable(declaration: IrVariable) {
+//            recordRegion(declaration, RegionKind.Code)
+            declaration.initializer?.acceptChildrenVoid(this)
         }
 
         override fun visitBody(body: IrBody) = when (body) {
@@ -139,7 +130,7 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
         }
 
         override fun visitCall(expression: IrCall) {
-            recordRegion(expression, RegionKind.Code, "callsite")
+            recordRegion(expression, RegionKind.Code)
             expression.acceptChildrenVoid(this)
         }
 
@@ -147,10 +138,10 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
             expression.branches.forEach { branch ->
                 // Do not record location for else branch since it doesn't look correct.
                 if (branch.condition !is IrConst<*>) {
-                    recordRegion(branch.condition, RegionKind.Code, "condition")
+                    recordRegion(branch.condition, RegionKind.Code)
                     branch.condition.acceptChildrenVoid(this)
                 }
-                recordRegion(branch.result, RegionKind.Code, "branch")
+                recordRegion(branch.result, RegionKind.Code)
                 branch.result.acceptChildrenVoid(this)
             }
         }
@@ -166,25 +157,22 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
                 expression.acceptChildrenVoid(this)
         }
 
+        // Returnable block wraps the inlined subtree.
         private fun visitReturnableBlock(returnableBlock: IrReturnableBlock) {
             val file = (returnableBlock as? KonanIrReturnableBlockImpl)?.sourceFile
-                    ?: dummyFile
-            if (file.packageFragmentDescriptor.module != context.moduleDescriptor) {
+            if (file == null || file.packageFragmentDescriptor.module != context.moduleDescriptor) {
                 return
             }
-            // Returnable block wraps the inlined subtree.
+            println("Ruturnable block: ${RegionImpl.fromIr(returnableBlock, curFile, RegionKind.Expansion(file)).dump()}")
+            recordRegion(returnableBlock, RegionKind.Code)
             // TODO: Should we cover block that is came from stdlib?
             irFileStack.push(file)
             returnableBlock.acceptChildrenVoid(this)
             irFileStack.pop()
         }
 
-        private fun recordRegion(irElement: IrElement, kind: RegionKind, comment: String = "") {
+        private fun recordRegion(irElement: IrElement, kind: RegionKind) {
             regions[irElement] = RegionImpl.fromIr(irElement, curFile, kind)
-            if (comment.isNotEmpty()) {
-                println("Added region for $comment")
-                println("$irElement -> ${regions.getValue(irElement).dump()}")
-            }
         }
     }
 }

@@ -76,7 +76,7 @@ FunctionCoverage LLVMWriteCoverageRegionMapping(unsigned int *fileIdMapping, siz
     }
     MutableArrayRef<llvm::coverage::CounterMappingRegion> mra(mrv);
     CoverageMappingWriter writer(ArrayRef<unsigned int>(fileIdMapping, fileIdMappingSize),
-                                 get(counterExpressionBuilderHandler)->getExpressions(), mra);
+                                 None, mra);
     std::string CoverageMapping;
     raw_string_ostream OS(CoverageMapping);
     writer.write(OS);

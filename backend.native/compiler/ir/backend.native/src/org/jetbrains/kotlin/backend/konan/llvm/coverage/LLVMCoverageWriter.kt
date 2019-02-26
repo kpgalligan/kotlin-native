@@ -39,10 +39,9 @@ internal class LLVMCoverageWriter(
             // TODO: Each record contains char* which should be freed.
             val (functionMappingRecords, functionCoverages) = filesRegionsInfo.flatMap { it.functions }.map { functionRegions ->
                 val counterExpressionBuilder = LLVMCreateCounterExpressionBuilder()
-                val regions = (functionRegions.regions.values + functionRegions.gaps).map { region ->
+                val regions = (functionRegions.regions.values).map { region ->
                     alloc<LLVMCoverageRegion>().populateFrom(region, functionRegions.regionEnumeration.getValue(region), filesIndex).ptr
                 }
-                println()
                 val fileIds = functionRegions.regions.map { filesIndex.getValue(it.value.file) }.toSet().toIntArray()
                 val functionCoverage = LLVMWriteCoverageRegionMapping(
                         fileIds.toCValues(), fileIds.size.signExtend(),
