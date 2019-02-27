@@ -602,7 +602,7 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
         }
 
 
-        val coverageInstrumentation: CoverageInstrumentation =
+        val coverageInstrumentation: CoverageInstrumentation? =
                 context.coverage.getInstrumentation(declaration) { function, args -> functionGenerationContext.call(function, args) }
 
         private var name:String? = declaration?.name?.asString()
@@ -758,8 +758,8 @@ internal class CodeGeneratorVisitor(val context: Context, val lifetimes: Map<IrE
     }
 
     private fun recordCoverage(irElement: IrElement) {
-        if (context.coverage.enabled)
-            (currentCodeContext.functionScope() as? FunctionScope)?.coverageInstrumentation?.instrumentIrElement(irElement)
+        // TODO: Maybe? Less? Question? Marks? Somehow???
+        (currentCodeContext.functionScope() as? FunctionScope)?.coverageInstrumentation?.instrumentIrElement(irElement)
     }
 
     //-------------------------------------------------------------------------//

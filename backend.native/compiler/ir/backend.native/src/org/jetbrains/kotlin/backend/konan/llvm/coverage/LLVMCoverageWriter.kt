@@ -13,7 +13,7 @@ private fun RegionKind.toLLVMCoverageRegionKind(): LLVMCoverageRegionKind = when
     is RegionKind.Expansion -> LLVMCoverageRegionKind.EXPANSION
 }
 
-private fun LLVMCoverageRegion.populateFrom(region: RegionImpl, regionId: Int, filesIndex: Map<IrFile, Int>) = apply {
+private fun LLVMCoverageRegion.populateFrom(region: Region, regionId: Int, filesIndex: Map<IrFile, Int>) = apply {
     fileId = filesIndex.getValue(region.file)
     lineStart = region.startLine
     columnStart = region.startColumn
@@ -27,7 +27,7 @@ private fun LLVMCoverageRegion.populateFrom(region: RegionImpl, regionId: Int, f
 
 internal class LLVMCoverageWriter(
         private val context: Context,
-        private val filesRegionsInfo: List<FileRegionInfoImpl>) {
+        private val filesRegionsInfo: List<FileRegionInfo>) {
     fun write() {
         if (filesRegionsInfo.isEmpty()) return
 

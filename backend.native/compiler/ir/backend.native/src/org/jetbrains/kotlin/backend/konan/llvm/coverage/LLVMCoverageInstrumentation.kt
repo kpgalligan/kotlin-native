@@ -11,7 +11,7 @@ import org.jetbrains.kotlin.ir.declarations.IrFunction
 
 internal class LLVMCoverageInstrumentation(
         override val context: Context,
-        private val functionRegions: FunctionRegionsImpl,
+        private val functionRegions: FunctionRegions,
         private val callSitePlacer: (function: LLVMValueRef, args: List<LLVMValueRef>) -> Unit
 ) : CoverageInstrumentation, ContextUtils {
 
@@ -25,7 +25,7 @@ internal class LLVMCoverageInstrumentation(
         }
     }
 
-    private fun placeRegionIncrement(region: RegionImpl) {
+    private fun placeRegionIncrement(region: Region) {
         val numberOfRegions = Int32(functionRegions.regions.size).llvm
         val regionNum = Int32(functionRegions.regionEnumeration.getValue(region)).llvm
         callSitePlacer(LLVMInstrProfIncrement(context.llvmModule)!!, listOf(functionNameGlobal, functionHash, numberOfRegions, regionNum))
@@ -36,8 +36,4 @@ internal class LLVMCoverageInstrumentation(
         val x = LLVMCreatePGOFunctionNameVar(function.llvmFunction, name)!!
         return LLVMConstBitCast(x, int8TypePtr)!!
     }
-}
-
-internal class EmptyCoverageInstrumentation : CoverageInstrumentation {
-    override fun instrumentIrElement(element: IrElement) {}
 }
