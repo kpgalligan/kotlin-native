@@ -38,6 +38,6 @@ internal class LLVMCoverageInstrumentation(
     }
 }
 
-internal class DumpCoverageInstrumentation : CoverageInstrumentation {
+internal class EmptyCoverageInstrumentation : CoverageInstrumentation {
     override fun instrumentIrElement(element: IrElement) {}
 }

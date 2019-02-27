@@ -209,7 +209,7 @@ internal class LinkStage(val context: Context) {
 
     fun makeObjectFiles() {
 
-        val program = if (context.shouldEmitCoverage()) {
+        val program = if (context.coverage.enabled) {
             val file = temporary("profiled", ".bc")
             hostLlvmTool("opt", emitted, "-instrprof", "-o", file)
             file

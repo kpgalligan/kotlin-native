@@ -162,8 +162,8 @@ internal class FunctionInlining(val context: Context) : IrElementTransformerVoid
                     context.config.configuration.languageVersionSettings)
 
             return IrReturnableBlockImpl(
-                    startOffset = startOffset,
-                    endOffset = endOffset,
+                    startOffset = callSite.startOffset,
+                    endOffset = callSite.endOffset,
                     type = callSite.type,
                     symbol = irReturnableBlockSymbol,
                     origin = if (isCoroutineIntrinsicCall) CoroutineIntrinsicLambdaOrigin else null,

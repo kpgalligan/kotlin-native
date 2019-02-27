@@ -4,15 +4,16 @@ import org.jetbrains.kotlin.backend.common.ir.ir2string
 import org.jetbrains.kotlin.backend.common.pop
 import org.jetbrains.kotlin.backend.common.push
 import org.jetbrains.kotlin.backend.konan.Context
-import org.jetbrains.kotlin.backend.konan.ir.KonanIrReturnableBlockImpl
 import org.jetbrains.kotlin.backend.konan.llvm.column
 import org.jetbrains.kotlin.backend.konan.llvm.line
 import org.jetbrains.kotlin.backend.konan.llvm.symbolName
 import org.jetbrains.kotlin.ir.IrElement
+import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
+import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.resolve.descriptorUtil.module
 
 class RegionImpl(
@@ -23,6 +24,7 @@ class RegionImpl(
         override val endColumn: Int,
         override val kind: RegionKind
 ) : Region {
+
     companion object {
         fun fromIr(irElement: IrElement, irFile: IrFile, kind: RegionKind) =
                 fromOffset(irElement.startOffset, irElement.endOffset, irFile, kind)
@@ -45,12 +47,13 @@ class FunctionRegionsImpl(
 ) : FunctionRegions {
     val regionEnumeration = (regions.values).mapIndexed { index, region -> region to index }.toMap()
 
-    // Actually, it should be computed. But since we don't support PGO it doesn't really matter for now.
+    // Actually, it should be computed. But since we don't support PGO structural hash doesn't really matter for now.
     val structuralHash: Long = 0
 }
 
 private fun Region.dump() = buildString {
-    append("${file.name}${(kind as? RegionKind.Expansion)?.let { " expand to " + it.expandedFile.name} ?: ""}: ${kind::class.simpleName} $startLine, $startColumn -> $endLine, $endColumn")
+    append("${file.name}${(kind as? RegionKind.Expansion)?.let { " expand to " + it.expandedFile.name} ?: ""}: " +
+            "${kind::class.simpleName} $startLine, $startColumn -> $endLine, $endColumn")
 }
 
 private fun FunctionRegionsImpl.dump() = buildString {
@@ -63,11 +66,14 @@ class FileRegionInfoImpl(
         override val functions: List<FunctionRegionsImpl>
 ) : FileRegionInfo
 
+// TODO: Add support for user-specified klibs
+private fun IrFile.shouldBeCovered(context: Context) =
+        packageFragmentDescriptor.module == context.moduleDescriptor
+
 internal class LLVMCoverageRegionCollector(val context: Context) : CoverageRegionCollector {
     override fun collectFunctionRegions(irModuleFragment: IrModuleFragment): List<FileRegionInfoImpl> =
             irModuleFragment.files
-                    // TODO: Add support for user-specified klibs
-                    .filter { it.packageFragmentDescriptor.module == context.moduleDescriptor }
+                    .filter { it.shouldBeCovered(context) }
                     .map {
                         val collector = FunctionsCollector(it, context)
                         collector.visitFile(it)
@@ -119,8 +125,15 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
         }
 
         override fun visitVariable(declaration: IrVariable) {
-//            recordRegion(declaration, RegionKind.Code)
-            declaration.initializer?.acceptChildrenVoid(this)
+            declaration.initializer?.acceptVoid(this)
+        }
+
+        override fun visitSetVariable(expression: IrSetVariable) {
+            expression.value.acceptVoid(this)
+        }
+
+        override fun <T> visitConst(expression: IrConst<T>) {
+            recordRegion(expression, RegionKind.Code)
         }
 
         override fun visitBody(body: IrBody) = when (body) {
@@ -159,7 +172,7 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
 
         // Returnable block wraps the inlined subtree.
         private fun visitReturnableBlock(returnableBlock: IrReturnableBlock) {
-            val file = (returnableBlock as? KonanIrReturnableBlockImpl)?.sourceFile
+            val file = (returnableBlock.sourceFileSymbol?.owner)
             if (file == null || file.packageFragmentDescriptor.module != context.moduleDescriptor) {
                 return
             }
@@ -172,6 +185,10 @@ private class IrFunctionRegionsCollector(val context: Context, val irFile: IrFil
         }
 
         private fun recordRegion(irElement: IrElement, kind: RegionKind) {
+            if (irElement.startOffset == UNDEFINED_OFFSET || irElement.endOffset == UNDEFINED_OFFSET) {
+                println("WARNING: ${ir2string(irElement)} has undefined offset. Region won't be recorded.")
+                return
+            }
             regions[irElement] = RegionImpl.fromIr(irElement, curFile, kind)
         }
     }

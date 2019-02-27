@@ -53,7 +53,7 @@ import java.lang.System.out
 import kotlin.LazyThreadSafetyMode.PUBLICATION
 import kotlin.reflect.KProperty
 import org.jetbrains.kotlin.backend.common.ir.copyTo
-import org.jetbrains.kotlin.backend.konan.llvm.coverage.FileRegionInfoImpl
+import org.jetbrains.kotlin.backend.konan.llvm.coverage.LLVMCoverageManager
 import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 
 /**
@@ -319,6 +319,8 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
 
     val cStubsManager = CStubsManager()
 
+    val coverage = LLVMCoverageManager(this)
+
     lateinit var privateFunctions: List<Pair<IrFunction, DataFlowIR.FunctionSymbol.Declared>>
     lateinit var privateClasses: List<Pair<IrClass, DataFlowIR.Type.Declared>>
 
@@ -440,10 +442,6 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
     fun shouldContainDebugInfo() = config.debug
 
     fun shouldOptimize() = config.configuration.getBoolean(KonanConfigKeys.OPTIMIZATION)
-
-    // TODO: refactor
-    fun shouldEmitCoverage() = config.configuration.getBoolean(KonanConfigKeys.COVERAGE)
-    val filesRegionsInfo = mutableListOf<FileRegionInfoImpl>()
 
     override var inVerbosePhase = false
     override fun log(message: () -> String) {
