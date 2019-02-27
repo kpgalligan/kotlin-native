@@ -3,6 +3,7 @@ package org.jetbrains.kotlin.backend.konan.llvm.coverage
 import org.jetbrains.kotlin.backend.common.ir.ir2string
 import org.jetbrains.kotlin.backend.common.pop
 import org.jetbrains.kotlin.backend.common.push
+import org.jetbrains.kotlin.backend.konan.ir.ir2stringWholezzz
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.declarations.*
@@ -11,6 +12,7 @@ import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
 
+// TODO: rename `shouldBeCovered`
 internal class LLVMCoverageRegionCollector(private val shouldBeCovered: (IrFile) -> Boolean) : CoverageRegionCollector {
 
     override fun collectFunctionRegions(irModuleFragment: IrModuleFragment): List<FileRegionInfo> =
@@ -34,7 +36,6 @@ internal class LLVMCoverageRegionCollector(private val shouldBeCovered: (IrFile)
             if (!declaration.isInline && !declaration.isExternal) {
                 val regions = collectRegions(file, declaration)
                 if (regions.regions.isNotEmpty()) {
-                    println(regions.dump())
                     functionRegions += regions
                 }
             }
@@ -54,6 +55,8 @@ private class IrFunctionRegionsCollector(val shouldBeCovered: (IrFile) -> Boolea
         return FunctionRegions(irFunction, visitor.regions)
     }
 
+    // Very similar to CodeGeneratorVisitor but instead generation of bitcode
+    // we collect regions.
     private inner class CollectorVisitor : IrElementVisitorVoid {
 
         private val irFileStack = mutableListOf(irFile)
@@ -67,16 +70,12 @@ private class IrFunctionRegionsCollector(val shouldBeCovered: (IrFile) -> Boolea
             element.acceptChildrenVoid(this)
         }
 
+        override fun visitExpression(expression: IrExpression) {
+            collectRegions(expression)
+        }
+
         override fun visitVariable(declaration: IrVariable) {
-            declaration.initializer?.acceptVoid(this)
-        }
-
-        override fun visitSetVariable(expression: IrSetVariable) {
-            expression.value.acceptVoid(this)
-        }
-
-        override fun <T> visitConst(expression: IrConst<T>) {
-            recordRegion(expression, RegionKind.Code)
+            declaration.initializer?.let { collectRegions(it) }
         }
 
         override fun visitBody(body: IrBody) = when (body) {
@@ -85,47 +84,145 @@ private class IrFunctionRegionsCollector(val shouldBeCovered: (IrFile) -> Boolea
             else -> error("Unexpected function body type: $body")
         }
 
-        override fun visitCall(expression: IrCall) {
-            recordRegion(expression, RegionKind.Code)
-            expression.acceptChildrenVoid(this)
+        fun collectRegions(value: IrExpression): Unit =  when (value) {
+            is IrTypeOperatorCall -> collectTypeOperator(value)
+            is IrCall -> collectCall(value)
+            is IrDelegatingConstructorCall -> collectCall(value)
+            is IrInstanceInitializerCall -> collectInstanceInitializerCall(value)
+            is IrGetValue -> collectGetValue(value)
+            is IrSetVariable -> collectSetVariable(value)
+            is IrGetField -> collectGetField(value)
+            is IrSetField -> collectSetField(value)
+            is IrConst<*> -> collectConst(value)
+            is IrReturn -> collectReturn(value)
+            is IrWhen -> collectWhen(value)
+            is IrThrow -> collectThrow(value)
+            is IrTry -> collectTry(value)
+            is IrReturnableBlock -> collectReturnableBlock(value)
+            is IrContainerExpression -> collectContainerExpression(value)
+            is IrWhileLoop -> collectWhileLoop(value)
+            is IrDoWhileLoop -> collectDoWhileLoop(value)
+            is IrVararg -> collectVararg(value)
+            is IrBreak -> collectBreak(value)
+            is IrContinue -> collectContinue(value)
+            is IrGetObjectValue -> collectGetObjectValue(value)
+            is IrFunctionReference -> collectFunctionReference(value)
+            is IrSuspendableExpression -> collectSuspendableExpression(value)
+            is IrSuspensionPoint -> collectSuspensionPoint(value)
+            else -> {}
         }
 
-        override fun visitWhen(expression: IrWhen) {
-            expression.branches.forEach { branch ->
+        private fun collectInstanceInitializerCall(instanceInitializerCall: IrInstanceInitializerCall) {
+
+        }
+
+        private fun collectGetValue(getValue: IrGetValue) {
+            recordRegion(getValue)
+        }
+
+        private fun collectSetVariable(setVariable: IrSetVariable) {
+            setVariable.value.acceptVoid(this)
+        }
+
+        private fun collectGetField(getField: IrGetField) {
+            getField.receiver?.let { collectRegions(it) }
+        }
+
+        private fun collectSetField(setField: IrSetField) {
+            collectRegions(setField.value)
+            setField.receiver?.let { collectRegions(it) }
+        }
+
+        private fun collectConst(const: IrConst<*>) {
+            recordRegion(const)
+        }
+
+        private fun collectReturn(irReturn: IrReturn) {
+//            recordRegion(irReturn)
+            collectRegions(irReturn.value)
+        }
+
+        private fun collectWhen(irWhen: IrWhen) {
+            irWhen.branches.forEach { branch ->
                 // Do not record location for else branch since it doesn't look correct.
                 if (branch.condition !is IrConst<*>) {
-                    recordRegion(branch.condition, RegionKind.Code)
-                    branch.condition.acceptChildrenVoid(this)
+                    collectRegions(branch.condition)
                 }
-                recordRegion(branch.result, RegionKind.Code)
-                branch.result.acceptChildrenVoid(this)
+                collectRegions(branch.result)
             }
         }
 
-        override fun visitContainerExpression(expression: IrContainerExpression) {
-            expression.acceptChildrenVoid(this)
+        private fun collectThrow(irThrow: IrThrow) {
+            collectRegions(irThrow.value)
+            recordRegion(irThrow)
         }
 
-        override fun visitBlock(expression: IrBlock) {
-            if (expression is IrReturnableBlock)
-                visitReturnableBlock(expression)
-            else
-                expression.acceptChildrenVoid(this)
+        private fun collectTry(irTry: IrTry) {
         }
 
-        // Returnable block wraps the inlined subtree.
-        private fun visitReturnableBlock(returnableBlock: IrReturnableBlock) {
+        private fun collectReturnableBlock(returnableBlock: IrReturnableBlock) {
             val file = (returnableBlock.sourceFileSymbol?.owner)
             if (file != null && shouldBeCovered(file)) {
-                println("Ruturnable block: ${Region.fromIr(returnableBlock, currentFile, RegionKind.Expansion(file)).dump()}")
-                recordRegion(returnableBlock, RegionKind.Code)
+                recordRegion(returnableBlock)
                 irFileStack.push(file)
                 returnableBlock.acceptChildrenVoid(this)
                 irFileStack.pop()
             }
         }
 
-        private fun recordRegion(irElement: IrElement, kind: RegionKind) {
+        private fun collectContainerExpression(containerExpression: IrContainerExpression) {
+            containerExpression.acceptChildrenVoid(this)
+        }
+
+        private fun collectWhileLoop(whileLoop: IrWhileLoop) {
+            collectRegions(whileLoop.condition)
+            whileLoop.body?.let { collectRegions(it) }
+        }
+
+        private fun collectDoWhileLoop(doWhileLoop: IrDoWhileLoop) {
+            collectRegions(doWhileLoop.condition)
+            doWhileLoop.body?.let { collectRegions(it) }
+        }
+
+        private fun collectVararg(vararg: IrVararg) {
+            vararg.elements.forEach { it.acceptVoid(this) }
+        }
+
+        private fun collectBreak(irBreak: IrBreak) {
+            recordRegion(irBreak)
+        }
+
+        private fun collectContinue(irContinue: IrContinue) {
+            recordRegion(irContinue)
+        }
+
+        private fun collectGetObjectValue(getObjectValue: IrGetObjectValue) {
+
+        }
+
+        private fun collectFunctionReference(functionReference: IrFunctionReference) {
+
+        }
+
+
+        private fun collectSuspendableExpression(suspendableExpression: IrSuspendableExpression) {
+
+        }
+
+        private fun collectSuspensionPoint(suspensionPoint: IrSuspensionPoint) {
+
+        }
+
+        private fun collectTypeOperator(typeOperatorCall: IrTypeOperatorCall) {
+
+        }
+
+        private fun collectCall(call: IrFunctionAccessExpression) {
+            recordRegion(call, RegionKind.Code)
+            call.acceptChildrenVoid(this)
+        }
+
+        private fun recordRegion(irElement: IrElement, kind: RegionKind = RegionKind.Code) {
             if (irElement.startOffset == UNDEFINED_OFFSET || irElement.endOffset == UNDEFINED_OFFSET) {
                 println("WARNING: ${ir2string(irElement)} has undefined offset. Region won't be recorded.")
                 return

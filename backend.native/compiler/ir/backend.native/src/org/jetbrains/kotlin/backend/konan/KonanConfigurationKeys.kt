@@ -108,7 +108,8 @@ class KonanConfigKeys {
                 = CompilerConfigurationKey.create("debug info format version")
         val COVERAGE: CompilerConfigurationKey<Boolean>
                 = CompilerConfigurationKey.create("emit coverage info")
-
+        val LIBRARIES_TO_COVER: CompilerConfigurationKey<List<String>>
+                = CompilerConfigurationKey.create<List<String>>("libraries to profile") // TODO: better description
     }
 }
 
