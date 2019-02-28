@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2017 JetBrains s.r.o.
+ * Copyright 2010-2019 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,15 +23,18 @@
 extern "C" {
 # endif
 
-// TODO: add reference
+/**
+ * See org.jetbrains.kotlin.backend.konan.llvm.coverage.RegionKind.
+ */
 enum LLVMCoverageRegionKind {
     CODE,
     GAP,
-    EXPANSION,
-    // Consider dropping this kind since it's used only for conditional compilation.
-    SKIP
+    EXPANSION
 };
 
+/**
+ * See org.jetbrains.kotlin.backend.konan.llvm.coverage.Region.
+ */
 struct LLVMCoverageRegion {
     int fileId;
     int lineStart;
@@ -40,41 +43,41 @@ struct LLVMCoverageRegion {
     int columnEnd;
     int counterId;
     int expandedFileId;
-    // 0 - code
     enum LLVMCoverageRegionKind kind;
 };
 
-struct FunctionCoverage {
+struct LLVMFunctionCoverage {
     const char* coverageData;
     size_t size;
 };
 
-typedef struct {
-    void *ptr;
-} LLVMCounterExpressionBuilderHandler;
-
-void LLVMBuilderAddCounters(LLVMCounterExpressionBuilderHandler handler, int firstCounterId, int secondCounterId);
-
-LLVMCounterExpressionBuilderHandler LLVMCreateCounterExpressionBuilder();
-
-void LLVMDisposeCounterExpressionBuilder(LLVMCounterExpressionBuilderHandler handler);
-
+/**
+ * Add record in the following format: https://llvm.org/docs/CoverageMappingFormat.html#function-record.
+ */
 LLVMValueRef
-LLVMAddFunctionMappingRecord(LLVMContextRef context, const char *name, uint64_t hash, struct FunctionCoverage coverageMapping);
+LLVMAddFunctionMappingRecord(LLVMContextRef context, const char *name, uint64_t hash, struct LLVMFunctionCoverage coverageMapping);
 
-struct FunctionCoverage LLVMWriteCoverageRegionMapping(unsigned int *fileIdMapping, size_t fileIdMappingSize,
-                                           struct LLVMCoverageRegion **mappingRegions, size_t mappingRegionsSize,
-                                           LLVMCounterExpressionBuilderHandler counterExpressionBuilderHandler);
+/**
+ * Wraps creation of coverage::CoverageMappingWriter and call to coverage::CoverageMappingWriter::write.
+ */
+struct LLVMFunctionCoverage LLVMWriteCoverageRegionMapping(unsigned int *fileIdMapping, size_t fileIdMappingSize,
+                                           struct LLVMCoverageRegion **mappingRegions, size_t mappingRegionsSize);
 
+/**
+ * Create __llvm_coverage_mapping global.
+ */
 LLVMValueRef LLVMCoverageEmit(LLVMModuleRef moduleRef, LLVMValueRef *records, size_t recordsSize,
         const char **filenames, int *filenamesIndices, size_t filenamesSize,
-        struct FunctionCoverage** functionCoverages, size_t functionCoveragesSize);
+        struct LLVMFunctionCoverage** functionCoverages, size_t functionCoveragesSize);
 
-void LLVMCoverageAddFunctionNamesGlobal(LLVMContextRef context, LLVMModuleRef moduleRef,
-                                        LLVMValueRef *functionNames, size_t functionNamesSize);
-
+/**
+ * Wrapper for `llvm.instrprof.increment` declaration.
+ */
 LLVMValueRef LLVMInstrProfIncrement(LLVMModuleRef moduleRef);
 
+/**
+ * Wrapper for llvm::createPGOFuncNameVar.
+ */
 LLVMValueRef LLVMCreatePGOFunctionNameVar(LLVMValueRef llvmFunction, const char *pgoFunctionName);
 
 # ifdef __cplusplus

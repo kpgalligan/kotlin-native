@@ -9,7 +9,10 @@ import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.resolve.descriptorUtil.module
 
-internal class LLVMCoverageManager(val context: Context) {
+/**
+ * "Umbrella" class of all the of the code coverage related logic.
+ */
+internal class CoverageManager(val context: Context) {
 
     val enabled: Boolean
         get() = context.config.configuration.getBoolean(KonanConfigKeys.COVERAGE)
@@ -29,24 +32,32 @@ internal class LLVMCoverageManager(val context: Context) {
         }
     }
 
-    private fun shouldBeCovered(file: IrFile) =
+    private fun fileCoverageFilter(file: IrFile) =
             file.packageFragmentDescriptor.module in coveredModules
 
-    fun getInstrumentation(irFunction: IrFunction?, callSitePlacer: (function: LLVMValueRef, args: List<LLVMValueRef>) -> Unit): CoverageInstrumentation? =
+    /**
+     * Walk [irModuleFragment] subtree and collect [FileRegionInfo] for files that are part of [coveredModules].
+     */
+    fun collectRegions(irModuleFragment: IrModuleFragment) {
+        if (enabled) {
+            val regions = CoverageRegionCollector(this::fileCoverageFilter).collectFunctionRegions(irModuleFragment)
+            filesRegionsInfo += regions
+        }
+    }
+
+    /**
+     * @return [LLVMCoverageInstrumentation] instance if [irFunction] should be covered.
+     */
+    fun getInstrumentation(irFunction: IrFunction?, callSitePlacer: (function: LLVMValueRef, args: List<LLVMValueRef>) -> Unit) =
             if (enabled && irFunction != null) {
                 getFunctionRegions(irFunction)?.let { LLVMCoverageInstrumentation(context, it, callSitePlacer) }
             } else {
                 null
             }
 
-    fun collectRegions(irModuleFragment: IrModuleFragment) {
-        if (enabled) {
-            filesRegionsInfo += LLVMCoverageRegionCollector(this::shouldBeCovered).collectFunctionRegions(irModuleFragment).also {
-                it.flatMap { it.functions }.forEach { println(it.dump()) }
-            }
-        }
-    }
-
+    /**
+     * Add __llvm_coverage_mapping to the LLVM module.
+     */
     fun writeRegionInfo() {
         LLVMCoverageWriter(context, filesRegionsInfo).write()
     }

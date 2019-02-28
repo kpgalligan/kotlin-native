@@ -1,18 +1,4 @@
-/*
- * Copyright 2010-2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// TODO: LICENSE
 
 #include <CoverageMappingC.h>
 
@@ -39,10 +25,6 @@
 using namespace llvm;
 using namespace llvm::coverage;
 
-static llvm::coverage::CounterExpressionBuilder *get(LLVMCounterExpressionBuilderHandler handler) {
-    return (llvm::coverage::CounterExpressionBuilder *) handler.ptr;
-}
-
 static coverage::CounterMappingRegion::RegionKind determineRegionKind(const struct LLVMCoverageRegion& region) {
     switch (region.kind) {
         case LLVMCoverageRegionKind::CODE:
@@ -51,39 +33,36 @@ static coverage::CounterMappingRegion::RegionKind determineRegionKind(const stru
             return coverage::CounterMappingRegion::RegionKind::GapRegion;
         case LLVMCoverageRegionKind::EXPANSION:
             return coverage::CounterMappingRegion::RegionKind::ExpansionRegion;
-        case LLVMCoverageRegionKind::SKIP:
-            return coverage::CounterMappingRegion::RegionKind::SkippedRegion;
     }
 }
 
-FunctionCoverage LLVMWriteCoverageRegionMapping(unsigned int *fileIdMapping, size_t fileIdMappingSize,
-                                                struct LLVMCoverageRegion **mappingRegions, size_t mappingRegionsSize,
-                                                LLVMCounterExpressionBuilderHandler counterExpressionBuilderHandler) {
+static coverage::CounterMappingRegion createCounterMappingRegion(struct LLVMCoverageRegion& region) {
+    auto regionKind = determineRegionKind(region);
+    int expandedFileId = 0;
+    if (regionKind == coverage::CounterMappingRegion::RegionKind::ExpansionRegion) {
+        expandedFileId = region.expandedFileId;
+    }
+    const Counter &counter = coverage::Counter::getCounter(region.counterId);
+    return coverage::CounterMappingRegion(counter, region.fileId, expandedFileId, region.lineStart,
+                                                        region.columnStart, region.lineEnd, region.columnEnd, regionKind);
+}
 
-    std::vector<coverage::CounterMappingRegion> mrv;
+LLVMFunctionCoverage LLVMWriteCoverageRegionMapping(unsigned int *fileIdMapping, size_t fileIdMappingSize,
+                                                struct LLVMCoverageRegion **mappingRegions, size_t mappingRegionsSize) {
+    std::vector<coverage::CounterMappingRegion> counterMappingRegions;
     for (size_t i = 0; i < mappingRegionsSize; ++i) {
         struct LLVMCoverageRegion region = *mappingRegions[i];
-        auto regionKind = determineRegionKind(region);
-        int expandedFileId = 0;
-        if (regionKind == coverage::CounterMappingRegion::RegionKind::ExpansionRegion) {
-            expandedFileId = region.expandedFileId;
-        }
-        coverage::CounterMappingRegion counterMappingRegion(coverage::Counter::getCounter(region.counterId),
-                                                            region.fileId, expandedFileId, region.lineStart,
-                                                            region.columnStart, region.lineEnd, region.columnEnd,
-                                                            regionKind);
-        mrv.emplace_back(counterMappingRegion);
+        counterMappingRegions.emplace_back(createCounterMappingRegion(region));
     }
-    MutableArrayRef<llvm::coverage::CounterMappingRegion> mra(mrv);
-    CoverageMappingWriter writer(ArrayRef<unsigned int>(fileIdMapping, fileIdMappingSize),
-                                 None, mra);
+    CoverageMappingWriter writer(ArrayRef<unsigned int>(fileIdMapping, fileIdMappingSize), None, counterMappingRegions);
     std::string CoverageMapping;
     raw_string_ostream OS(CoverageMapping);
     writer.write(OS);
     OS.flush();
-    char *retval = new char[CoverageMapping.length() + 1];
-    std::memcpy(retval, CoverageMapping.c_str(), CoverageMapping.length());
-    return FunctionCoverage{.coverageData = retval, .size = CoverageMapping.length()};
+    char *coverageData = new char[CoverageMapping.length() + 1];
+    // Use memcpy because CoverageMapping could contain '\0' in it.
+    std::memcpy(coverageData, CoverageMapping.c_str(), CoverageMapping.length());
+    return LLVMFunctionCoverage{.coverageData = coverageData, .size = CoverageMapping.length()};
 }
 
 static StructType *getFunctionRecordTy(LLVMContext &Ctx) {
@@ -91,7 +70,7 @@ static StructType *getFunctionRecordTy(LLVMContext &Ctx) {
     Type *FunctionRecordTypes[] = {
 #include "llvm/ProfileData/InstrProfData.inc"
     };
-    StructType *FunctionRecordTy = StructType::get(Ctx, makeArrayRef(FunctionRecordTypes), /*isPacked=*/true);
+    StructType *FunctionRecordTy = StructType::get(Ctx, makeArrayRef(FunctionRecordTypes), true);
     return FunctionRecordTy;
 }
 
@@ -106,9 +85,9 @@ static llvm::Constant *addFunctionMappingRecord(llvm::LLVMContext &Ctx, StringRe
     return llvm::ConstantStruct::get(FunctionRecordTy, makeArrayRef(FunctionRecordVals));
 }
 
-LLVMValueRef
-LLVMAddFunctionMappingRecord(LLVMContextRef context, const char *name, uint64_t hash,
-                             struct FunctionCoverage coverageMapping) {
+// See https://github.com/llvm/llvm-project/blob/fa8fa044ec46b94e64971efa8852df0d58114062/clang/lib/CodeGen/CoverageMappingGen.cpp#L1284.
+LLVMValueRef LLVMAddFunctionMappingRecord(LLVMContextRef context, const char *name, uint64_t hash,
+                             struct LLVMFunctionCoverage coverageMapping) {
     return llvm::wrap(addFunctionMappingRecord(*llvm::unwrap(context), name, hash,
                                                std::string{coverageMapping.coverageData, coverageMapping.size}));
 }
@@ -120,6 +99,8 @@ static std::string normalizeFilename(StringRef Filename) {
     return Path.str().str();
 }
 
+// See https://github.com/llvm/llvm-project/blob/fa8fa044ec46b94e64971efa8852df0d58114062/clang/lib/CodeGen/CoverageMappingGen.cpp#L1335.
+// Please note that llvm/ProfileData/InstrProfData.inc refers to variable names of the function that includes it. So be careful with renaming.
 static llvm::GlobalVariable *emitCoverageGlobal(
         llvm::LLVMContext &Ctx,
         llvm::Module &module,
@@ -176,32 +157,27 @@ static llvm::GlobalVariable *emitCoverageGlobal(
             CovDataHeaderTy, makeArrayRef(CovDataHeaderVals));
 
     // Create the coverage data record
-    llvm::Type *CovDataTypes[] = {CovDataHeaderTy, RecordsTy,
-                                  FilenamesAndMappingsVal->getType()};
+    llvm::Type *CovDataTypes[] = {CovDataHeaderTy, RecordsTy, FilenamesAndMappingsVal->getType()};
     auto CovDataTy = llvm::StructType::get(Ctx, makeArrayRef(CovDataTypes));
-    llvm::Constant *TUDataVals[] = {CovDataHeaderVal, RecordsVal,
-                                    FilenamesAndMappingsVal};
-    auto CovDataVal =
-            llvm::ConstantStruct::get(CovDataTy, makeArrayRef(TUDataVals));
-    auto CovData = new llvm::GlobalVariable(
+
+    llvm::Constant *TUDataVals[] = {CovDataHeaderVal, RecordsVal, FilenamesAndMappingsVal};
+    auto CovDataVal = llvm::ConstantStruct::get(CovDataTy, makeArrayRef(TUDataVals));
+
+    return new llvm::GlobalVariable(
             module, CovDataTy, true, llvm::GlobalValue::InternalLinkage,
             CovDataVal, llvm::getCoverageMappingVarName());
-
-
-    return CovData;
 }
 
-// TODO: Ugly as the ugliest place in hell.
-LLVMValueRef LLVMCoverageEmit(LLVMModuleRef moduleRef, LLVMValueRef *records, size_t recordsSize,
+LLVMValueRef LLVMCoverageEmit(LLVMModuleRef moduleRef,
+        LLVMValueRef *records, size_t recordsSize,
         const char **filenames, int *filenamesIndices, size_t filenamesSize,
-        struct FunctionCoverage **functionCoverages, size_t functionCoveragesSize) {
+        struct LLVMFunctionCoverage **functionCoverages, size_t functionCoveragesSize) {
     LLVMContext &Ctx = *unwrap(LLVMGetModuleContext(moduleRef));
     Module &module = *unwrap(moduleRef);
 
     std::vector<Constant *> FunctionRecords;
     for (size_t i = 0; i < recordsSize; ++i) {
-        auto *x = dyn_cast<Constant>(unwrap(records[i]));
-        FunctionRecords.push_back(x);
+        FunctionRecords.push_back(dyn_cast<Constant>(unwrap(records[i])));
     }
     SmallDenseMap<const char *, unsigned, 8> FileEntries;
     for (size_t i = 0; i < filenamesSize; ++i) {
@@ -213,38 +189,12 @@ LLVMValueRef LLVMCoverageEmit(LLVMModuleRef moduleRef, LLVMValueRef *records, si
     }
     StructType *FunctionRecordTy = getFunctionRecordTy(Ctx);
     std::string RawCoverageMappings = llvm::join(CoverageMappings.begin(), CoverageMappings.end(), "");
-    GlobalVariable *coverageGlobal = emitCoverageGlobal(
-            Ctx,
-            module,
-            FunctionRecords,
-            FileEntries,
-            RawCoverageMappings,
-            FunctionRecordTy
-    );
-    const std::string &section = getInstrProfSectionName(IPSK_covmap,
-                                                         Triple(module.getTargetTriple()).getObjectFormat());
+    GlobalVariable *coverageGlobal = emitCoverageGlobal(Ctx, module, FunctionRecords, FileEntries, RawCoverageMappings, FunctionRecordTy);
+
+    const std::string &section = getInstrProfSectionName(IPSK_covmap, Triple(module.getTargetTriple()).getObjectFormat());
     coverageGlobal->setSection(section);
     coverageGlobal->setAlignment(8);
     return wrap(coverageGlobal);
-}
-
-void LLVMCoverageAddFunctionNamesGlobal(LLVMContextRef context, LLVMModuleRef moduleRef,
-                                        LLVMValueRef *functionNames, size_t functionNamesSize) {
-    LLVMContext &Ctx = *llvm::unwrap(context);
-    Module &module = *llvm::unwrap(moduleRef);
-
-    std::vector<Constant *> FunctionNames;
-    for (size_t i = 0; i < functionNamesSize; ++i) {
-        FunctionNames.push_back(llvm::dyn_cast_or_null<Constant>(llvm::unwrap(functionNames[i])));
-    }
-
-    auto NamesArrTy = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(Ctx), functionNamesSize);
-    auto NamesArrVal = llvm::ConstantArray::get(NamesArrTy, FunctionNames);
-    // This variable will *NOT* be emitted to the object file. It is used
-    // to pass the list of names referenced to codegen.
-    new llvm::GlobalVariable(module, NamesArrTy, true,
-                             llvm::GlobalValue::InternalLinkage, NamesArrVal,
-                             llvm::getCoverageUnusedNamesVarName());
 }
 
 LLVMValueRef LLVMInstrProfIncrement(LLVMModuleRef moduleRef) {
@@ -256,16 +206,3 @@ LLVMValueRef LLVMCreatePGOFunctionNameVar(LLVMValueRef llvmFunction, const char 
     auto *fnPtr = cast<llvm::Function>(unwrap(llvmFunction));
     return wrap(createPGOFuncNameVar(*fnPtr, pgoFunctionName));
 }
-
-LLVMCounterExpressionBuilderHandler LLVMCreateCounterExpressionBuilder() {
-    return LLVMCounterExpressionBuilderHandler{.ptr = new CounterExpressionBuilder()};
-}
-
-void LLVMDisposeCounterExpressionBuilder(LLVMCounterExpressionBuilderHandler handler) {
-    delete handler.ptr;
-}
-
-void LLVMBuilderAddCounters(LLVMCounterExpressionBuilderHandler handler, int firstCounterId, int secondCounterId) {
-    get(handler)->add(Counter::getCounter(firstCounterId), Counter::getCounter(secondCounterId));
-}
-

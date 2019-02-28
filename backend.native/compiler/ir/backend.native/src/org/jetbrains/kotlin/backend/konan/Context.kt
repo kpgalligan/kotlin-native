@@ -53,7 +53,7 @@ import java.lang.System.out
 import kotlin.LazyThreadSafetyMode.PUBLICATION
 import kotlin.reflect.KProperty
 import org.jetbrains.kotlin.backend.common.ir.copyTo
-import org.jetbrains.kotlin.backend.konan.llvm.coverage.LLVMCoverageManager
+import org.jetbrains.kotlin.backend.konan.llvm.coverage.CoverageManager
 import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 
 /**
@@ -319,7 +319,7 @@ internal class Context(config: KonanConfig) : KonanBackendContext(config) {
 
     val cStubsManager = CStubsManager()
 
-    val coverage = LLVMCoverageManager(this)
+    val coverage = CoverageManager(this)
 
     lateinit var privateFunctions: List<Pair<IrFunction, DataFlowIR.FunctionSymbol.Declared>>
     lateinit var privateClasses: List<Pair<IrClass, DataFlowIR.Type.Declared>>
